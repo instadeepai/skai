@@ -67,7 +67,8 @@ def main(_) -> None:
     strategy = tf.distribute.TPUStrategy(resolver)
 
   elif FLAGS.accelerator == 'gpu' and FLAGS.distribute==True:
-    # strategy = 
+    # strategy = tf.distribute.MirroredStrategy()
+    #TODO: Add distributed strategy for GPU when distributed training on GPU is required
     pass
 
   if FLAGS.keep_logs and not config.training.log_to_xm:
