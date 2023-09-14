@@ -18,68 +18,77 @@ parameter_spec = aip.StudySpec.ParameterSpec
 
 '''
 xmanager launch src/skai/model/xm_launch_single_model_vertex.py -- \
-    --xm_wrap_late_bindings \
-    --xm_upgrade_db=True \
-    --config=src/skai/model/configs/skai_config.py \
-    --config.data.tfds_dataset_name=skai_dataset \
-    --config.data.tfds_data_dir=gs://skai-data/hurricane_ian \
-    --config.output_dir=gs://skai-data/experiments/test_skai \
-    --config.training.num_epochs=1 \
-    --experiment_name=test_skai \
-    --project_path=~/path/to/skai \
-    --accelerator=V100 \
-    --accelerator_count=1
+  --xm_wrap_late_bindings \
+  --xm_upgrade_db=True \
+  --config=src/skai/model/configs/skai_config.py \
+  --config.data.tfds_dataset_name=skai_dataset \
+  --config.data.tfds_data_dir=gs://skai-data/hurricane_ian \
+  --config.output_dir=gs://skai-data/experiments/test_skai \
+  --config.training.num_epochs=1 \
+  --experiment_name=test_skai \
+  --project_path=~/path/to/skai \
+  --accelerator=V100 \
+  --accelerator_count=1
 '''
 
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('project_path', '.', 'Path to project')
 flags.DEFINE_string(
-    'experiment_name',
-    '',
-    'Label for XManager experiment to make it easier to find.',
+  'experiment_name',
+  '',
+  'Label for XManager experiment to make it easier to find.',
 )
 flags.DEFINE_bool(
-    'use_vizier', False, 'Finds the best hyperparameters using Vizier.'
+  'use_vizier', False, 'Finds the best hyperparameters using Vizier.'
 )
 flags.DEFINE_bool(
-    'train_as_ensemble',
-    False,
-    'Trains an ensemble of single '
-    'models, as we would for Stage 1 in Introspective Self-Play.',
+  'train_as_ensemble',
+  False,
+  'Trains an ensemble of single '
+  'models, as we would for Stage 1 in Introspective Self-Play.',
 )
 flags.DEFINE_bool('eval_only', False, 'Only runs evaluation, no training.')
 
 flags.DEFINE_integer(
-    'ram',
-    32,
-    'Fixed amount of RAM for the work unit in GB',
+  'ram',
+  32,
+  'Fixed amount of RAM for the work unit in GB',
 )
 
 flags.DEFINE_integer(
-    'cpu',
-    4,
-    (
-        'Number of vCPU instances to allocate. If left as None the default'
-        ' value set by the cloud AI platform will be used.'
-    ),
+  'cpu',
+  4,
+  (
+      'Number of vCPU instances to allocate. If left as None the default'
+      ' value set by the cloud AI platform will be used.'
+  ),
 )
 
 flags.DEFINE_enum(
-    'accelerator',
-    default=None,
-    help='Accelerator to use for faster computations.',
-    enum_values=ACCELERATORS,
+  'accelerator',
+  default=None,
+  help='Accelerator to use for faster computations.',
+  enum_values=ACCELERATORS,
 )
 
 flags.DEFINE_integer(
-    'accelerator_count',
-    default=1,
-    help=(
-        'Number of accelerator machines to use. Note that TPU_V2 and TPU_V3 '
-        'only support count=8, see '
-        'https://github.com/deepmind/xmanager/blob/main/docs/executors.md'
-    ),
+  'accelerator_count',
+  default=1,
+  help=(
+      'Number of accelerator machines to use. Note that TPU_V2 and TPU_V3 '
+      'only support count=8, see '
+      'https://github.com/deepmind/xmanager/blob/main/docs/executors.md'
+  ),
+)
+
+flags.DEFINE_bool(
+  'distribute',
+  default=False,
+  help=(
+    'Distribute training across multiple accelerator devices'
+  )
+
 )
 config_flags.DEFINE_config_file('config')
 
@@ -141,30 +150,35 @@ def main(_) -> None:
     
     executable_spec = xm.PythonContainer(
         # Package the current directory that this script is in.
-        path=os.path.expanduser(FLAGS.project_path),
-        base_image=base_image, 
-        docker_instructions=docker_instructions,
-        entrypoint=xm.CommandList([
-            'pip install /skai/src/.',
-            'python /skai/src/skai/model/train.py $@',
+      path=os.path.expanduser(FLAGS.project_path),
+      base_image=base_image, 
+      docker_instructions=docker_instructions,
+      entrypoint=xm.CommandList([
+          'pip install /skai/src/.',
+          'python /skai/src/skai/model/train.py $@',
         ]),
         use_deep_module=True,
     )
+
     if FLAGS.accelerator is not None:
-      if (
-          FLAGS.accelerator in ['TPU_V3', 'TPU_V2']
-          and FLAGS.accelerator_count != 8
-      ):
-        raise ValueError(
-            f'The accelerator {FLAGS.accelerator} only support 8 devices.'
-        )
+      if FLAGS.accelerator in ['TPU_V3', 'TPU_V2']:
+          # if FLAGS.accelerator_count != 8:
+          #   raise ValueError(
+          #       f'The accelerator {FLAGS.accelerator} only support 8 devices.'
+          #   )
+        accelerator = 'tpu'
+      else:
+        accelerator = 'gpu'
+
       resources_args = {
-          FLAGS.accelerator: FLAGS.accelerator_count,
-          'RAM': FLAGS.ram * xm.GiB,
-          'CPU': FLAGS.cpu * xm.vCPU,
+        FLAGS.accelerator: FLAGS.accelerator_count,
+        'RAM': FLAGS.ram * xm.GiB,
+        'CPU': FLAGS.cpu * xm.vCPU,
       }
     else:
       resources_args = {'RAM': FLAGS.ram * xm.GiB, 'CPU': FLAGS.cpu * xm.vCPU}
+      accelerator = 'cpu'
+
     executor = xm_local.Vertex(
         requirements=xm.JobRequirements(
             service_tier=xm.ServiceTier.PROD, **resources_args
@@ -173,12 +187,14 @@ def main(_) -> None:
 
     [train_executable] = experiment.package([
         xm.Packageable(
-            executable_spec=executable_spec,
-            executor_spec=xm_local.Vertex.Spec(),
-            args={
-                'config': config_path,
-                'is_vertex': 'vertex' in str(executor.Spec()).lower(),
-            },
+          executable_spec=executable_spec,
+          executor_spec=xm_local.Vertex.Spec(),
+          args={
+              'config': config_path,
+              'is_vertex': 'vertex' in str(executor.Spec()).lower(),
+              'distribute': FLAGS.distribute, 
+              'accelerator': accelerator,
+          },
         ),
     ])
 
@@ -219,8 +235,8 @@ def main(_) -> None:
         study_factory=NewStudy(
             study_config=get_study_config()),
 
-        num_trials_total=100,
-        num_parallel_trial_runs=FLAGS.accelerator_count,
+        num_trials_total=4,
+        num_parallel_trial_runs=2,
     ).launch()
 
 
