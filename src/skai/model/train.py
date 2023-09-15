@@ -52,7 +52,7 @@ flags.DEFINE_string(
 )
 
 def get_tpu_resolver():
-  resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
+  resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='local')
   tf.config.experimental_connect_to_cluster(resolver)
   tf.tpu.experimental.initialize_tpu_system(resolver)
   print("All devices: ", tf.config.list_logical_devices('TPU'))
