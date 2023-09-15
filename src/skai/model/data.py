@@ -10,8 +10,8 @@ and the label is specific to the main task.
 import collections
 import dataclasses
 import os
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 import uuid
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
@@ -719,10 +719,10 @@ class SkaiDataset(tfds.core.GeneratorBasedBuilder):
     if self.builder_config.load_small_images:
       features['input_feature']['small_image'] = small_image_concat
     features['label'] = tf.cast(example['label'], tf.int64)
-    features['example_id'] = self.encode_string_to_number(example['example_id'])
+    features['example_id'] = tf.cast(self.encode_string_to_number(example['example_id']), tf.int64)
     features['subgroup_label'] = features['label']
     features['coordinates'] = example['coordinates']
-    features['string_label'] = self.encode_string_to_number(example['string_label'])
+    features['string_label'] = tf.cast(self.encode_string_to_number(example['string_label']), tf.int64)
     return features
 
   def encode_string_to_number(self, input_string):
