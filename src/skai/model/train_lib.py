@@ -473,6 +473,21 @@ def run_train(
   Returns:
     Trained model.
   """
+
+  def encode_strings_to_numbers(data: tf.Tensor):
+    get_hash_values = lambda x: abs(hash(x.ref()))
+
+    def encode_string_to_number(data, key):
+      encoded_values = tf.map_fn(elems=data[key], 
+                                  fn=get_hash_values, 
+                                  dtype=tf.int64) 
+      data[key] = encoded_values
+      return data
+
+    data = encode_string_to_number(data, "example_id")
+    data = encode_string_to_number(data, "string_label")
+    return data
+
   if strategy is not None:
     with strategy.scope():
       two_head_model = init_model(
@@ -486,6 +501,9 @@ def run_train(
           experiment_name=experiment_name,
           example_id_to_bias_table=example_id_to_bias_table
       )
+
+  train_ds = train_ds.map(encode_strings_to_numbers) 
+  val_ds = val_ds.map(encode_strings_to_numbers)
 
   two_head_model.fit(
       train_ds,
