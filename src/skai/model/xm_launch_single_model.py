@@ -7,7 +7,7 @@ import asyncio
 import itertools
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Iterable
 
 from absl import app
 from absl import flags
@@ -15,11 +15,8 @@ import ml_collections
 from ml_collections import config_flags
 from xmanager import xm
 from xmanager import xm_abc
-from xmanager.contrib.internal import parameter_controller
 from xmanager.vizier import vizier_abc
 
-# TODO(jlee24): Use OSS Vizier.
-from google3.learning.vizier.service.client import pyvizier
 
 
 FLAGS = flags.FLAGS
@@ -63,50 +60,21 @@ flags.DEFINE_list(
 config_flags.DEFINE_config_file('config')
 
 
-def get_study_config() -> pyvizier.StudyConfig:
-  """Creates Vizier study_config."""
-  study_config = pyvizier.StudyConfig()
-  study_config.automated_stopping_config = (
-      pyvizier.AutomatedStoppingConfig.decay_curve_stopping_config(
-          use_steps=True
-      )
-  )
-  # TODO(jlee24): Make search space controllable via experiment config.
-  search_space_root = study_config.search_space.select_root()
-  search_space_root.add_categorical_param(
-      name='args.config.optimizer.type',
-      feasible_values=('adam', 'sgd'),
-  )
-  search_space_root.add_float_param(
-      name='args.config.optimizer.learning_rate',
-      min_value=1e-6,
-      max_value=1e-2,
-      default_value=1e-3,
-      scale_type=pyvizier.ScaleType.LOG,
-  )
-  search_space_root.add_float_param(
-      name='args.config.model.l2_regularization_factor',
-      min_value=0.0,
-      max_value=3.0,
-      default_value=0.5,
-      scale_type=pyvizier.ScaleType.LINEAR,
-  )
 
-  study_config.metric_information = [
-      pyvizier.MetricInformation(
-          name='epoch_main_aucpr_1_vs_rest_val',
-          goal=pyvizier.ObjectiveMetricGoal.MAXIMIZE,
-      )
-  ]
-  study_config.measurement_selection_type = (
-      pyvizier.MeasurementSelectionType.BEST_MEASUREMENT
-  )
 
-  study_config.study_stopping_config = pyvizier.StudyStoppingConfig(
-      max_num_trials=1000
-  )
+def _sweep(
+    hyperparameter_name: str,
+    values: Iterable[Any]
+) -> Iterable[tuple[str, Any]]:
+  for value in values:
+    yield (hyperparameter_name, value)
 
-  return study_config
+
+def _product(
+    hyperparams: list[Iterable[tuple[str, Any]]]
+) -> Iterable[dict[str, Any]]:
+  for combo in itertools.product(*hyperparams):
+    yield dict(combo)
 
 
 def main(_) -> None:
@@ -170,6 +138,13 @@ def main(_) -> None:
         'config.model.use_pytorch_style_resnet': (
             config.model.use_pytorch_style_resnet
         ),
+        'config.data.labeled_train_pattern': (
+            config.data.labeled_train_pattern
+        ),
+        'config.data.unlabeled_train_pattern': (
+            config.data.unlabeled_train_pattern
+        ),
+        'config.data.validation_pattern': config.data.validation_pattern,
     }
     if config.data.name == 'skai':
       job_args.update({
@@ -190,26 +165,22 @@ def main(_) -> None:
               job, study_factory, num_parallel_work_units=10
           )
       )
-    else:  # Tune hyperparameters with hyper.
-
-      @parameter_controller.controller(interpreter=xm_abc.ml_python())
+    else:
       async def run_train(
           experiment: xm.Experiment,
           config: ml_collections.ConfigDict,
           train_as_ensemble: bool,
-          job_args: Dict[str, Any],
-          optimizer_types: List[str],
-          lr_tune_values: List[float],
-          l2_reg_tune_values: List[float],
-          num_epoch_values: List[float],
+          job_args: dict[str, Any],
+          optimizer_types: list[str],
+          lr_tune_values: list[float],
+          l2_reg_tune_values: list[float],
+          num_epoch_values: list[float],
       ) -> None:
-        sweep = hyper.product([
-            hyper.sweep('config.optimizer.type', optimizer_types),
-            hyper.sweep('config.optimizer.learning_rate', lr_tune_values),
-            hyper.sweep(
-                'config.model.l2_regularization_factor', l2_reg_tune_values
-            ),
-            hyper.sweep('config.training.num_epochs', num_epoch_values),
+        sweep = _product([
+            _sweep('config.optimizer.type', optimizer_types),
+            _sweep('config.optimizer.learning_rate', lr_tune_values),
+            _sweep('config.model.l2_regularization_factor', l2_reg_tune_values),
+            _sweep('config.training.num_epochs', num_epoch_values)
         ])
         for args in sweep:
           output_dir = config.output_dir
@@ -226,10 +197,8 @@ def main(_) -> None:
             num_ood_splits = int(num_splits * config.data.ood_ratio)
             num_id_splits = num_splits - num_ood_splits
             train_combos = [
-                list(c)
-                for c in list(
-                    itertools.combinations(range(num_splits), num_id_splits)
-                )
+                list(c) for c in list(
+                    itertools.combinations(range(num_splits), num_id_splits))
             ]
             two_head_ensemble_dir = os.path.join(config.output_dir, 'ensemble')
             train_ensemble_operations = []

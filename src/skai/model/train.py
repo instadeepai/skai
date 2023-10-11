@@ -20,6 +20,7 @@ from skai.model import train_lib
 from skai.model.configs import base_config
 import tensorflow as tf
 
+
 FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file('config')
 flags.DEFINE_bool('keep_logs', True, 'If True, creates a log file in output '
@@ -147,8 +148,8 @@ def main(_) -> None:
   )
   model_params.train_bias = config.train_bias
 
-  work_unit = os.path.basename(FLAGS.trial_name)
-  output_dir = os.path.join(config.output_dir, work_unit)
+  job_id = os.path.basename(FLAGS.trial_name)
+  output_dir = os.path.join(config.output_dir, job_id)
   tf.io.gfile.makedirs(output_dir)
   example_id_to_bias_table = None
 

@@ -30,8 +30,14 @@ flags.DEFINE_integer(
     'max_dataflow_workers', None, 'Maximum number of dataflow workers'
 )
 flags.DEFINE_string('worker_type', 'c3-standard-8', 'Dataflow worker type.')
-flags.DEFINE_string('worker_machine_type','n1-highmem-8', 'worker machine type')
-flags.DEFINE_string('dataflow_service_options', '', 'Dataflow service options')
+flags.DEFINE_string(
+    'worker_machine_type', 'n1-highmem-8', 'worker machine type')
+flags.DEFINE_string('accelerator', None, 'Accelerator to use.')
+flags.DEFINE_integer('accelerator_count', 1, 'Number of accelerators to use.')
+flags.DEFINE_list(
+    'text_labels', ['intact buildings', 'damaged buildings'], 'Text labels.'
+)
+
 
 def main(_) -> None:
   timestamp = time.strftime('%Y%m%d-%H%M%S')
@@ -45,10 +51,9 @@ def main(_) -> None:
       FLAGS.dataflow_temp_dir,
       FLAGS.max_dataflow_workers,
       FLAGS.worker_service_account,
-      worker_type=FLAGS.worker_type,
-      worker_machine_type=FLAGS.worker_machine_type,
-      dataflow_service_options=FLAGS.dataflow_service_options
-
+      machine_type=FLAGS.worker_machine_type,
+      accelerator=FLAGS.accelerator,
+      accelerator_count=FLAGS.accelerator_count,
   )
 
   inference_lib.run_tf2_inference_with_csv_output(
@@ -58,6 +63,7 @@ def main(_) -> None:
       FLAGS.image_size,
       FLAGS.post_images_only,
       FLAGS.batch_size,
+      FLAGS.text_labels,
       pipeline_options,
   )
 

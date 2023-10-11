@@ -13,6 +13,7 @@ import tensorflow as tf
 
 MODEL_REGISTRY = {}
 RESNET_IMAGE_SIZE = 224
+TYPE_VISION = 'vision'
 
 
 def register_model(name: str):
@@ -30,6 +31,21 @@ def get_model(name: str):
     raise ValueError(
         f'Unknown model: {name}\nPossible choices: {MODEL_REGISTRY.keys()}')
   return MODEL_REGISTRY[name]
+
+
+class SoftmaxHead(tf.keras.models.Model):
+  """Add Softmax Head to a model."""
+
+  def __init__(self, model, **kwargs):
+    super().__init__(**kwargs)
+    self.model = model
+    self.softmax = tf.keras.layers.Softmax()
+
+  def __call__(self, inputs, **kwargs):
+    logits = self.model(inputs, **kwargs)
+    softmax_main = self.softmax(logits['main'])
+    softmax_bias = self.softmax(logits['bias'])
+    return {'main': softmax_main, 'bias': softmax_bias}
 
 
 @dataclasses.dataclass
@@ -75,6 +91,9 @@ class ResNet50v1(tf.keras.Model):
     super(ResNet50v1, self).__init__(name=model_params.model_name)
 
     self.model_params = model_params
+    self.model_name = tf.Variable(
+        TYPE_VISION, trainable=False, dtype=tf.string
+    )
     self.resnet_model = tf.keras.applications.resnet50.ResNet50(
         include_top=False,
         weights='imagenet' if model_params.load_pretrained_weights else None,
@@ -101,16 +120,18 @@ class ResNet50v1(tf.keras.Model):
 
     self.output_main = tf.keras.layers.Dense(
         model_params.num_classes,
-        activation='softmax',
         name='main',
         kernel_regularizer=regularizer)
 
     self.output_bias = tf.keras.layers.Dense(
         model_params.num_classes,
         trainable=model_params.train_bias,
-        activation='softmax',
         name='bias',
         kernel_regularizer=regularizer)
+
+  def save(self, *args, **kwargs):
+    new_model = SoftmaxHead(self)
+    new_model.save(*args, **kwargs)
 
   def get_config(self):
     config = super(ResNet50v1, self).get_config()
@@ -148,6 +169,9 @@ class ResNet50v2(tf.keras.Model):
     super(ResNet50v2, self).__init__(name=model_params.model_name)
 
     self.model_params = model_params
+    self.model_name = tf.Variable(
+        model_params.model_name, trainable=False, dtype=tf.string
+    )
     self.resnet_model = tf.keras.applications.resnet_v2.ResNet50V2(
         include_top=False,
         weights='imagenet' if model_params.load_pretrained_weights else None,
@@ -174,16 +198,18 @@ class ResNet50v2(tf.keras.Model):
 
     self.output_main = tf.keras.layers.Dense(
         model_params.num_classes,
-        activation='softmax',
         name='main',
         kernel_regularizer=regularizer)
 
     self.output_bias = tf.keras.layers.Dense(
         model_params.num_classes,
         trainable=model_params.train_bias,
-        activation='softmax',
         name='bias',
         kernel_regularizer=regularizer)
+
+  def save(self, *args, **kwargs):
+    new_model = SoftmaxHead(self)
+    new_model.save(*args, **kwargs)
 
   def get_config(self):
     config = super(ResNet50v2, self).get_config()
@@ -213,7 +239,7 @@ class TwoTower(tf.keras.Model):
   """Defines Two Tower class with two output heads.
 
   One output head is for the main training task, while the other is an optional
-  head to train on bias labels. Inputs are feature vectors. 
+  head to train on bias labels. Inputs are feature vectors.
   """
 
   def __init__(self,
@@ -221,6 +247,9 @@ class TwoTower(tf.keras.Model):
     super(TwoTower, self).__init__(name=model_params.model_name)
 
     self.model_params = model_params
+    self.model_name = tf.Variable(
+        TYPE_VISION, trainable=False, dtype=tf.string
+    )
     backbone = tf.keras.applications.resnet_v2.ResNet50V2(
         include_top=False,
         weights='imagenet' if model_params.load_pretrained_weights else None,
@@ -246,15 +275,18 @@ class TwoTower(tf.keras.Model):
     self.backbone = tf.keras.Sequential([backbone, dense])
     self.output_main = (
         tf.keras.layers.Dense(
-            units=model_params.num_classes, activation='sigmoid'
+            units=model_params.num_classes
         )
     )
     self.output_bias = tf.keras.layers.Dense(
         model_params.num_classes,
         trainable=model_params.train_bias,
-        activation='softmax',
         name='bias',
     )
+
+  def save(self, *args, **kwargs):
+    new_model = SoftmaxHead(self)
+    new_model.save(*args, **kwargs)
 
   def get_config(self):
     config = super(TwoTower, self).get_config()

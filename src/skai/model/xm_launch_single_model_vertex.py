@@ -2,33 +2,31 @@ r"""XM Launcher."""
 
 import os
 
-from absl import app, flags
+from absl import app
+from absl import flags
+from docker_instructions import get_docker_instructions
+from google.cloud import aiplatform_v1beta1 as aip
+from ml_collections import config_flags
 from xmanager import xm
 from xmanager import xm_local
-from xmanager_helper_module import VizierExploration, NewStudy
-from ml_collections import config_flags
-from google.cloud import aiplatform_v1beta1 as aip
-from docker_instructions import get_docker_instructions
+from xmanager.vizier import vizier_cloud
 
-GPU_ACCELERATORS = ["P100", "V100", "P4", "T4", "A100"]
-TPU_ACCELERATORS = ["TPU_V2", "TPU_V3"]
-ACCELERATORS = [*GPU_ACCELERATORS, *TPU_ACCELERATORS]
 
 parameter_spec = aip.StudySpec.ParameterSpec
 
 '''
 xmanager launch src/skai/model/xm_launch_single_model_vertex.py -- \
-  --xm_wrap_late_bindings \
-  --xm_upgrade_db=True \
-  --config=src/skai/model/configs/skai_config.py \
-  --config.data.tfds_dataset_name=skai_dataset \
-  --config.data.tfds_data_dir=gs://skai-data/hurricane_ian \
-  --config.output_dir=gs://skai-data/experiments/test_skai \
-  --config.training.num_epochs=1 \
-  --experiment_name=test_skai \
-  --project_path=~/path/to/skai \
-  --accelerator=V100 \
-  --accelerator_count=1
+    --xm_wrap_late_bindings \
+    --xm_upgrade_db=True \
+    --config=src/skai/model/configs/skai_config.py \
+    --config.data.tfds_dataset_name=skai_dataset \
+    --config.data.tfds_data_dir=gs://skai-data/hurricane_ian \
+    --config.output_dir=gs://skai-data/experiments/test_skai \
+    --cloud_location='us-central1' \
+    --experiment_name=test_skai \
+    --project_path=~/path/to/skai \
+    --accelerator=V100 \
+    --accelerator_count=1
 '''
 
 
@@ -49,7 +47,6 @@ flags.DEFINE_bool(
   'models, as we would for Stage 1 in Introspective Self-Play.',
 )
 flags.DEFINE_bool('eval_only', False, 'Only runs evaluation, no training.')
-
 flags.DEFINE_integer(
   'ram',
   32,
@@ -57,29 +54,32 @@ flags.DEFINE_integer(
 )
 
 flags.DEFINE_integer(
-  'cpu',
-  4,
-  (
-      'Number of vCPU instances to allocate. If left as None the default'
-      ' value set by the cloud AI platform will be used.'
-  ),
+    'cpu',
+    4,
+    ('Number of vCPU instances to allocate. If left as None the default'
+     ' value set by the cloud AI platform will be used.'
+    ),
 )
-
+flags.DEFINE_string(
+    'cloud_location',
+    None,
+    'Google Cloud location (region) for vizier jobs'
+)
 flags.DEFINE_enum(
-  'accelerator',
-  default=None,
-  help='Accelerator to use for faster computations.',
-  enum_values=ACCELERATORS,
+    'accelerator',
+    default=None,
+    help='Accelerator to use for faster computations.',
+    enum_values=['P100', 'V100', 'P4', 'T4', 'A100', 'TPU_V2', 'TPU_V3']
 )
 
 flags.DEFINE_integer(
-  'accelerator_count',
-  default=1,
-  help=(
-      'Number of accelerator machines to use. Note that TPU_V2 and TPU_V3 '
-      'only support count=8, see '
-      'https://github.com/deepmind/xmanager/blob/main/docs/executors.md'
-  ),
+    'accelerator_count',
+    1,
+    (
+        'Number of accelerator machines to use. Note that TPU_V2 and TPU_V3 '
+        'only support count=8, see '
+        'https://github.com/deepmind/xmanager/blob/main/docs/executors.md'
+    ),
 )
 
 flags.DEFINE_bool(
@@ -140,22 +140,22 @@ def get_study_config() -> aip.StudySpec:
 def main(_) -> None:
   config = FLAGS.config
   config_path = config_flags.get_config_filename(FLAGS['config'])
-  
+
   with xm_local.create_experiment(
       experiment_title=(
           f'{FLAGS.experiment_name} {config.data.name}_{config.model.name}'
       )
   ) as experiment:
     base_image, docker_instructions = get_docker_instructions(FLAGS.accelerator)
-    
+
     executable_spec = xm.PythonContainer(
         # Package the current directory that this script is in.
-      path=os.path.expanduser(FLAGS.project_path),
-      base_image=base_image, 
-      docker_instructions=docker_instructions,
-      entrypoint=xm.CommandList([
-          'pip install /skai/src/.',
-          'python /skai/src/skai/model/train.py $@',
+        path=os.path.expanduser(FLAGS.project_path),
+        base_image=base_image,
+        docker_instructions=docker_instructions,
+        entrypoint=xm.CommandList([
+            'pip install /skai/src/.',
+            'python /skai/src/skai/model/train.py $@',
         ]),
         use_deep_module=True,
     )
@@ -187,20 +187,18 @@ def main(_) -> None:
 
     [train_executable] = experiment.package([
         xm.Packageable(
-          executable_spec=executable_spec,
-          executor_spec=xm_local.Vertex.Spec(),
-          args={
-              'config': config_path,
-              'is_vertex': 'vertex' in str(executor.Spec()).lower(),
-              'distribute': FLAGS.distribute, 
-              'accelerator': accelerator,
-          },
+            executable_spec=executable_spec,
+            executor_spec=xm_local.Vertex.Spec(),
+            args={
+                'config': config_path,
+                'is_vertex': 'vertex' in str(executor.Spec()).lower()
+            },
         ),
     ])
 
     job_args = {
-        'config.output_dir': os.path.join(config.output_dir, 
-                                     str(experiment.experiment_id)),
+        'config.output_dir': os.path.join(config.output_dir,
+                                          str(experiment.experiment_id)),
         'config.train_bias': config.train_bias,
         'config.train_stage_2_as_ensemble': False,
         'config.round_idx': 0,
@@ -227,16 +225,20 @@ def main(_) -> None:
     job_args['config.training.save_best_model'] = True
     job_args['config.training.num_epochs'] = config.training.num_epochs
 
-    VizierExploration(
+    if FLAGS.cloud_location is None:
+      raise ValueError('Google Cloud location is either None or invalid.')
+    vizier_cloud.VizierExploration(
         experiment=experiment,
         job=xm.Job(
             executable=train_executable, executor=executor, args=job_args
         ),
-        study_factory=NewStudy(
-            study_config=get_study_config()),
+        study_factory=vizier_cloud.NewStudy(
+            study_config=get_study_config(),
+            location=FLAGS.cloud_location
+        ),
 
-        num_trials_total=4,
-        num_parallel_trial_runs=2,
+        num_trials_total=100,
+        num_parallel_trial_runs=3,
     ).launch()
 
 
