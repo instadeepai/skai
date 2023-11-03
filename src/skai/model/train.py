@@ -4,7 +4,6 @@ r"""Binary to run training on a single model once.
 # pylint: enable=line-too-long
 """
 
-import datetime
 import logging as native_logging
 import os
 
@@ -19,6 +18,7 @@ from skai.model import models
 from skai.model import sampling_policies
 from skai.model import train_lib
 from skai.model.configs import base_config
+from skai.model.train_strategy import get_strategy
 import tensorflow as tf
 
 
@@ -29,6 +29,12 @@ flags.DEFINE_bool('keep_logs', True, 'If True, creates a log file in output '
 flags.DEFINE_bool(
     'is_vertex', False, 'True if the training job will be executed on VertexAI.'
 )
+flags.DEFINE_enum(
+  'accelerator_type',
+  default='cpu',
+  help='Accelerator to use for computations',
+  enum_values=['cpu', 'gpu', 'tpu']
+  )
 flags.DEFINE_string('ensemble_dir', '', 'If specified, loads the models at '
                     'this directory to consider the ensemble.')
 flags.DEFINE_string(
@@ -97,7 +103,7 @@ def main(_) -> None:
         dataloader.train_ds.filter(
             generate_bias_table_lib.filter_ids_fn(ids_tab)) for
         ids_tab in sampling_policies.convert_ids_to_table(config.ids_dir)]
-
+  print("Ids dir: ", config.ids_dir)
   model_params = models.ModelTrainingParameters(
       model_name=config.model.name,
       train_bias=config.train_bias,
@@ -118,16 +124,14 @@ def main(_) -> None:
       reweighting_signal=config.reweighting.signal
   )
   model_params.train_bias = config.train_bias
-  output_dir = config.output_dir
-  if FLAGS.is_vertex:
-    # TODO: go/skai-instadeep - Create output_dir specific to job.
-    start_time = datetime.datetime.now()
-    timestamp = start_time.strftime('%Y-%m-%d-%H%M%S')
-    output_dir = f'{output_dir}_{timestamp}'
 
-  job_id = os.path.basename(FLAGS.trial_name)
-  output_dir = os.path.join(config.output_dir, job_id)
-  tf.io.gfile.makedirs(output_dir)
+  if FLAGS.is_vertex:
+    job_id = os.path.basename(FLAGS.trial_name)
+    output_dir = os.path.join(config.output_dir, job_id)
+    tf.io.gfile.makedirs(output_dir)
+  else:
+    #TODO - Choose a diretory name in case vertex ai is not used in running experiments
+    output_dir = config.output_dir
   example_id_to_bias_table = None
 
   if config.train_bias or (config.reweighting.do_reweighting and
@@ -191,6 +195,14 @@ def main(_) -> None:
   # Apply batching (must apply batching only after filtering)
   dataloader = data.apply_batch(dataloader, config.data.batch_size)
 
+  if FLAGS.accelerator_type == 'tpu':
+    # Encode string data components as numerical
+    # This is useful when using TPU which does not accept string datatype
+    dataloader = data.DataEncoder().encode_string_labels(dataloader)
+    dataloader = data.DataEncoder().encode_example_ids(dataloader)
+
+  strategy = get_strategy(accelerator_type=FLAGS.accelerator_type)
+
   _ = train_lib.train_and_evaluate(
       train_as_ensemble=config.train_stage_2_as_ensemble,
       dataloader=dataloader,
@@ -206,6 +218,7 @@ def main(_) -> None:
       example_id_to_bias_table=example_id_to_bias_table,
       vizier_trial_name=FLAGS.trial_name,
       is_vertex=FLAGS.is_vertex,
+      strategy=strategy
   )
 
 
