@@ -1,3 +1,17 @@
+# Copyright 2023 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 r"""Training pipeline for a two-headed output model, where one head is for bias.
 
 Includes the model definition, which implements two-headed output using
@@ -73,8 +87,22 @@ class TwoHeadedOutputModel(tf.keras.Model):
     })
     return config
 
-  def call(self, inputs):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
-    return self.model(inputs)
+  def call(self, inputs, training=True):  # pytype: disable=signature-mismatch  # overriding-parameter-count-checks
+
+    def _call_without_softmax(inputs):
+      return self.model(inputs)
+
+    def _call_with_softmax(inputs):
+      outputs = self.model(inputs)
+      out_main = tf.nn.softmax(outputs['main'], axis=-1)
+      out_bias = tf.nn.softmax(outputs['bias'], axis=-1)
+      return {'main': out_main, 'bias': out_bias}
+
+    return tf.cond(
+        tf.constant(training, dtype=tf.bool),
+        lambda: _call_without_softmax(inputs),
+        lambda: _call_with_softmax(inputs),
+    )
 
   def update_id_to_bias_table(self, table):
     self.id_to_bias_table = table
