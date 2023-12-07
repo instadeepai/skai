@@ -1,17 +1,3 @@
-# Copyright 2023 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Library of models to use in Introspective Active Sampling.
 
 This file contains a library of models that have two output heads: one for the
@@ -115,12 +101,14 @@ class ResNet50v1(tf.keras.Model):
 
     self.output_main = tf.keras.layers.Dense(
         model_params.num_classes,
+        activation='softmax',
         name='main',
         kernel_regularizer=regularizer)
 
     self.output_bias = tf.keras.layers.Dense(
         model_params.num_classes,
         trainable=model_params.train_bias,
+        activation='softmax',
         name='bias',
         kernel_regularizer=regularizer)
 
@@ -186,12 +174,14 @@ class ResNet50v2(tf.keras.Model):
 
     self.output_main = tf.keras.layers.Dense(
         model_params.num_classes,
+        activation='softmax',
         name='main',
         kernel_regularizer=regularizer)
 
     self.output_bias = tf.keras.layers.Dense(
         model_params.num_classes,
         trainable=model_params.train_bias,
+        activation='softmax',
         name='bias',
         kernel_regularizer=regularizer)
 
@@ -223,7 +213,7 @@ class TwoTower(tf.keras.Model):
   """Defines Two Tower class with two output heads.
 
   One output head is for the main training task, while the other is an optional
-  head to train on bias labels. Inputs are feature vectors.
+  head to train on bias labels. Inputs are feature vectors. 
   """
 
   def __init__(self,
@@ -256,12 +246,13 @@ class TwoTower(tf.keras.Model):
     self.backbone = tf.keras.Sequential([backbone, dense])
     self.output_main = (
         tf.keras.layers.Dense(
-            units=model_params.num_classes
+            units=model_params.num_classes, activation='sigmoid'
         )
     )
     self.output_bias = tf.keras.layers.Dense(
         model_params.num_classes,
         trainable=model_params.train_bias,
+        activation='softmax',
         name='bias',
     )
 
