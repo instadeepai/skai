@@ -187,7 +187,6 @@ class TrainLibTest(parameterized.TestCase):
     log_metrics_callback.LogMetricsCallback = mock.Mock(
         return_value=tf.keras.callbacks.Callback()
     )
-    self.strategy = tf.distribute.get_strategy()
 
   @parameterized.named_parameters(
       (model_name, model_name)
@@ -265,7 +264,6 @@ class TrainLibTest(parameterized.TestCase):
         self.model_params_one_head,
         'test_model_eval',
         callbacks=callbacks,
-        strategy=self.strategy,
     )
     checkpoint_dir = os.path.join(self.output_dir, 'checkpoints')
     self.assertNotEmpty(tf.io.gfile.listdir(checkpoint_dir))
@@ -310,7 +308,6 @@ class TrainLibTest(parameterized.TestCase):
         self.model_params_one_head,
         'test_model_eval',
         callbacks=callbacks,
-        strategy=self.strategy,
     )
 
     model_dir = self.output_dir
